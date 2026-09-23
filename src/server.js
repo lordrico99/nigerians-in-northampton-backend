@@ -25,25 +25,38 @@ app.use(
   })
 );
 
-app.use(cors({
+const corsOptions = {
   origin(origin, callback) {
-
-    /*
-      Allow requests with no Origin header
-      (Postman, PowerShell, server-to-server requests, etc.)
-    */
+    // Requests such as direct browser navigation or health checks
+    // may not contain an Origin header.
     if (!origin) {
       return callback(null, true);
     }
 
+    // Explicitly configured frontend origins.
     if (env.frontendOrigins.includes(origin)) {
       return callback(null, true);
     }
 
+    // Allow local development from localhost / 127.0.0.1
+    // regardless of which Live Server port is being used.
+    try {
+      const url = new URL(origin);
+
+      const isLocalDevelopment =
+        url.protocol === 'http:' &&
+        (url.hostname === 'localhost' ||
+          url.hostname === '127.0.0.1');
+
+      if (isLocalDevelopment) {
+        return callback(null, true);
+      }
+    } catch {
+      // Invalid Origin header.
+    }
+
     return callback(
-      new Error(
-        `CORS blocked origin: ${origin}`
-      )
+      new Error(`CORS blocked origin: ${origin}`)
     );
   },
 
@@ -63,8 +76,12 @@ app.use(cors({
     'X-Api-Key'
   ],
 
-  credentials: true
-}));
+  credentials: true,
+
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
