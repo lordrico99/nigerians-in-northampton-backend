@@ -75,22 +75,33 @@ export function getSessionTokenFromRequest(req) {
 }
 
 function appendCookie(res, value, maxAgeSeconds) {
+  const isProduction =
+    process.env.NODE_ENV === 'production';
+
   const parts = [
     `${AUTH_COOKIE_NAME}=${encodeURIComponent(value)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${isProduction ? 'None' : 'Lax'}`,
   ];
 
   if (maxAgeSeconds !== null) {
-    parts.push(`Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`);
+    parts.push(
+      `Max-Age=${Math.max(
+        0,
+        Math.floor(maxAgeSeconds)
+      )}`
+    );
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  if (isProduction) {
     parts.push('Secure');
   }
 
-  res.append('Set-Cookie', parts.join('; '));
+  res.append(
+    'Set-Cookie',
+    parts.join('; ')
+  );
 }
 
 export function setSessionCookie(res, token, remember = false) {
