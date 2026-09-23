@@ -1,0 +1,12 @@
+node_modules/
+
+.env
+.env.*
+!.env.example
+
+uploads/businesses/*
+!uploads/businesses/.gitkeep
+
+npm-debug.log*
+
+.DS_Store
