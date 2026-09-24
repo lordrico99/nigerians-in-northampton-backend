@@ -143,59 +143,286 @@ function buildEditableData({
   Returns only businesses/submissions belonging to
   the currently authenticated member.
 */
+/*
+  GET /api/my/businesses
+
+  Returns all businesses/submissions belonging to the
+  currently authenticated member.
+
+  Also recovers older records that were created before
+  userId ownership was introduced, using the account
+  email as a one-time ownership recovery mechanism.
+*/
 memberRouter.get(
   '/my/businesses',
   requireUser,
-  async (req, res) => {
-    const userId = req.user._id;
+  async (req, res, next) => {
+    try {
+      const userId = req.user._id;
+      const email = String(req.user.email || '')
+        .trim()
+        .toLowerCase();
 
-    const [submissions, businesses] =
-      await Promise.all([
-        BusinessSubmission.find({ userId })
+      /*
+        Current records already linked to this account.
+      */
+      const [
+        currentSubmissions,
+        currentBusinesses,
+      ] = await Promise.all([
+        BusinessSubmission.find({
+          userId,
+        })
           .sort({ createdAt: -1 })
           .lean(),
 
-        Business.find({ userId })
+        Business.find({
+          userId,
+        })
+          .select(
+            '+ownerName +ownerPhone +ownerEmail +ownerNote'
+          )
           .sort({ createdAt: -1 })
           .lean(),
       ]);
 
-    const businessesByReference = new Map(
-      businesses.map((business) => [
-        business.submissionReference,
-        business,
-      ])
-    );
+      /*
+        Recover legacy submissions that were created
+        before userId was being stored.
+      */
+      const legacySubmissions = email
+        ? await BusinessSubmission.find({
+            ownerEmail: email,
+            $or: [
+              { userId: null },
+              { userId: { $exists: false } },
+            ],
+          })
+            .sort({ createdAt: -1 })
+            .lean()
+        : [];
 
-    const items = submissions.map((submission) => {
-      const business =
-        businessesByReference.get(
-          submission.reference
-        ) || null;
+      /*
+        Recover legacy published businesses in the same way.
+        ownerEmail is select:false in the Business model,
+        so it must be explicitly selected.
+      */
+      const legacyBusinesses = email
+        ? await Business.find({
+            ownerEmail: email,
+            $or: [
+              { userId: null },
+              { userId: { $exists: false } },
+            ],
+          })
+            .select(
+              '+ownerName +ownerPhone +ownerEmail +ownerNote'
+            )
+            .sort({ createdAt: -1 })
+            .lean()
+        : [];
 
-      return {
-        ...submission,
+      /*
+        Permanently link recovered legacy records to the
+        authenticated account.
+      */
+      if (legacySubmissions.length) {
+        await BusinessSubmission.updateMany(
+          {
+            _id: {
+              $in: legacySubmissions.map(
+                (submission) => submission._id
+              ),
+            },
+          },
+          {
+            $set: {
+              userId,
+            },
+          }
+        );
+      }
 
-        businessId: business?._id || null,
+      if (legacyBusinesses.length) {
+        await Business.updateMany(
+          {
+            _id: {
+              $in: legacyBusinesses.map(
+                (business) => business._id
+              ),
+            },
+          },
+          {
+            $set: {
+              userId,
+            },
+          }
+        );
+      }
 
-        businessSlug:
-          business?.slug || null,
+      /*
+        Merge current + recovered records without duplicates.
+      */
+      const submissionMap = new Map();
 
-        publishedBusiness: business,
-      };
-    });
+      [
+        ...currentSubmissions,
+        ...legacySubmissions,
+      ].forEach((submission) => {
+        submissionMap.set(
+          String(submission._id),
+          {
+            ...submission,
+            userId,
+          }
+        );
+      });
 
-    return res.json({
-      success: true,
-      user: {
-        id: req.user._id,
-        name: req.user.name,
-        email: req.user.email,
-        role: req.user.role,
-        status: req.user.status,
-      },
-      listings: items,
-    });
+      const businessMap = new Map();
+
+      [
+        ...currentBusinesses,
+        ...legacyBusinesses,
+      ].forEach((business) => {
+        businessMap.set(
+          String(business._id),
+          {
+            ...business,
+            userId,
+          }
+        );
+      });
+
+      const submissions = Array.from(
+        submissionMap.values()
+      );
+
+      const businesses = Array.from(
+        businessMap.values()
+      );
+
+      /*
+        Match published businesses back to their submission
+        using submissionReference.
+      */
+      const businessesByReference = new Map();
+
+      businesses.forEach((business) => {
+        const reference = String(
+          business.submissionReference || ''
+        ).trim();
+
+        if (reference) {
+          businessesByReference.set(
+            reference,
+            business
+          );
+        }
+      });
+
+      /*
+        Build the member listing collection from submissions.
+      */
+      const items = submissions.map((submission) => {
+        const business =
+          businessesByReference.get(
+            String(submission.reference || '').trim()
+          ) || null;
+
+        return {
+          ...submission,
+
+          businessId:
+            business?._id || null,
+
+          businessSlug:
+            business?.slug || null,
+
+          publishedBusiness:
+            business,
+        };
+      });
+
+      /*
+        IMPORTANT:
+        Also include published businesses that do not have a
+        matching BusinessSubmission record.
+
+        This is what prevents an existing published listing
+        from disappearing from the member account page.
+      */
+      const representedBusinessIds = new Set(
+        items
+          .map((item) =>
+            String(item.businessId || '')
+          )
+          .filter(Boolean)
+      );
+
+      businesses.forEach((business) => {
+        const businessId = String(
+          business._id || ''
+        );
+
+        if (
+          businessId &&
+          !representedBusinessIds.has(businessId)
+        ) {
+          items.push({
+            ...business,
+
+            status: 'approved',
+
+            reference:
+              business.submissionReference || '',
+
+            businessId:
+              business._id,
+
+            businessSlug:
+              business.slug || null,
+
+            publishedBusiness:
+              business,
+          });
+        }
+      });
+
+      /*
+        Newest items first.
+      */
+      items.sort((a, b) => {
+        const dateA = new Date(
+          a.updatedAt ||
+          a.createdAt ||
+          0
+        ).getTime();
+
+        const dateB = new Date(
+          b.updatedAt ||
+          b.createdAt ||
+          0
+        ).getTime();
+
+        return dateB - dateA;
+      });
+
+      return res.json({
+        success: true,
+
+        user: {
+          id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+          role: req.user.role,
+          status: req.user.status,
+        },
+
+        listings: items,
+      });
+    } catch (error) {
+      return next(error);
+    }
   }
 );
 
