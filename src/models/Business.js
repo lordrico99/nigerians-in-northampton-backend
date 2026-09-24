@@ -32,7 +32,19 @@ const businessImageSchema = new mongoose.Schema(
 );
 
 const businessSchema = new mongoose.Schema(
-  {
+    {
+    /*
+      Member account that owns this published business.
+      This is populated from the authenticated session,
+      never trusted from the browser.
+    */
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: false,
+      index: true,
+    },
+    
     /*
       Links the public business record back to the original
       business submission that was approved.
