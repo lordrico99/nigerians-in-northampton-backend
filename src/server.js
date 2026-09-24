@@ -69,12 +69,10 @@ const corsOptions = {
     'OPTIONS'
   ],
 
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Admin-Api-Key',
-    'X-Api-Key'
-  ],
+allowedHeaders: [
+  'Content-Type',
+  'Authorization'
+],
 
   credentials: true,
 
