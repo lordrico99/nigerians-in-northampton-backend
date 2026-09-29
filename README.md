@@ -1,4 +1,4 @@
-# Nigerians in Northampton Directory Backend
+# Nigerian Community in Northamptonampton Directory Backend
 
 A Node.js + Express + MongoDB API for business submissions and the public Nigerian business directory.
 
